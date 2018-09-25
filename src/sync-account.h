@@ -158,6 +158,8 @@ private:
     void continueSync();
 
     void setState(AccountState state);
+    QStringMap lastReport(const QString &serviceName, const QString &sourceName, bool onlySuccessful = false) const;
+    void dumpReport(const QStringMap &report) const;
     QString syncMode(const QString &sourceName, bool *firstSync) const;
     bool syncService(const QString &serviceName);
     void setupServices();

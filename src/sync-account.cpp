@@ -90,6 +90,13 @@ void SyncAccount::setupServices()
     }
 }
 
+void SyncAccount::dumpReport(const QStringMap &report) const
+{
+    Q_FOREACH(const QString &key, report.keys()) {
+        qDebug() << "\t" << key << ":" << report[key];
+    }
+}
+
 void SyncAccount::setup()
 {
     setupServices();
@@ -247,6 +254,82 @@ void SyncAccount::wait()
 SyncAccount::AccountState SyncAccount::state() const
 {
     return m_state;
+}
+
+QStringMap SyncAccount::filterSourceReport(const QStringMap &report,
+                                           const QString &serviceName,
+                                           const uint accountId,
+                                           const QString &sourceName) const
+{
+    bool found = false;
+    QStringMap sourceReport;
+    const QString sourceKey = QString("source-%1").arg(QString(sourceName).replace("_", "__"));
+    Q_FOREACH(const QString &key, report.keys()) {
+        if (key.startsWith(sourceKey)) {
+            sourceReport.insert(key, report[key]);
+            found = true;
+        }
+    }
+
+    if (sourceReport.value(QString("%1-mode").arg(sourceKey)) == "disabled") {
+        sourceReport.clear();;
+    }
+
+    return sourceReport;
+}
+
+QStringMap SyncAccount::lastReport(const QString &serviceName,
+                                   const QString &sourceName,
+                                   bool onlySuccessful) const
+{
+    static QStringList okStatus;
+
+    if (okStatus.isEmpty()) {
+        okStatus << "0"
+                 << "200"
+                 << "204"
+                 << "207";
+    }
+    const uint pageSize = 100;
+    uint index = 0;
+
+    QArrayOfStringMap reports = m_currentSession->reports(index, pageSize);
+//    qDebug() << "REPORT(lastReport)========================================";
+//    Q_FOREACH(const QStringMap &map, reports) {
+//        SyncConfigure::dumpMap(map);
+//        qDebug() << "++++++++++++++++++++++++++++++++++++++++++++++++++++++";
+//    }
+//    qDebug() << "==========================================================";
+    if (reports.isEmpty()) {
+        return QStringMap();
+    } else if (serviceName.isEmpty()) {
+        return reports.value(0);
+    }
+
+    index += pageSize;
+    while (true) {
+        Q_FOREACH(const QStringMap &report, reports) {
+            QStringMap sourceReport = filterSourceReport(report, serviceName, m_account->id(), sourceName);
+            if (!sourceReport.isEmpty()) {
+                if (onlySuccessful) {
+                    QString status = report.value("status", "");
+                    if (okStatus.contains(status)) {
+                        return report;
+                    }
+                } else {
+                    return report;
+                }
+            }
+        }
+
+        if (reports.size() != pageSize)
+            break;
+
+        reports = m_currentSession->reports(index, pageSize);
+        index += pageSize;
+    }
+
+    return QStringMap();
 }
 
 QString SyncAccount::syncMode(const QString &sourceName,
@@ -598,6 +681,10 @@ void SyncAccount::onSessionStatusChanged(const QString &status, quint32 error, c
                 m_sourcesOnSync[sourceName] = SyncAccount::SourceSyncDone;
                 m_currentSyncResults.insert(sourceName, QString::number(i.value().error));
                 Q_EMIT syncSourceFinished(CALENDAR_SERVICE_TYPE, sourceName, isFirstSync, newStatus, "");
+            }
+
+            if (i.value().error) {
+                dumpReport(lastReport(calendarServiceName(), sourceName));
             }
         } else if ((status == "running;waiting") ||
                    (status == "idle")) {
